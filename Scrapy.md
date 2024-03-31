@@ -199,7 +199,7 @@ def parse(self, response):
 {'name': 'Our Band Could Be ...', 'price': '£57.25', 'url': 'catalogue/our-band-could-be-your-life-scenes-from-the-american-indie-underground-1981-1991_985/index.html'}
 ```
 
-## 4.3 Navigating to the "Next Page"
+## 4.3 Navigating To The "Next Page"
 
 Go back to scrapy shell, and find the route to next page.
 `response.css('li.next a ::attr(href)').get()`
@@ -246,7 +246,7 @@ Conc:
 ```
 
 ---
-# Part 5 Crawling With Scrapy
+# Part 5: Crawling With Scrapy
 ## 5.1 Requests For More Details
 
 However, this data only contained summary data for each book. Whereas if we looked at an individual book page we can see there is a lot more information like:
@@ -397,5 +397,324 @@ scrapy crawl bookspider -O myscrapeddata.csv
 
 However, there does exist some issues that some data cannot be displayed correctly.
 
+## 5.5 Extracting Images
+
+To finish the task given by our teacher, I have to extract images from the website.
+By checking the CSS selector, we can easily find out the path of images.
+
+```css
+<img src="media/cache/2c/da/2cdad67c44b002e7ead0cc35693c0e8b.jpg" alt="A Light in the Attic" class="thumbnail">
+```
+
+So let's yield the image urls and also store them in the local folder.
+
+```python
+yield {
+      'image_urls': [response.urljoin(response.css("div.item.active img::attr(src)").get())],
+      }
+
+      yield scrapy.Request(response.urljoin(response.css("div.item.active img::attr(src)").get()), callback=self.save_image)
+```
+
+Moreover, we should define a new function to save images and set the config in `settings.py` as well.
+
+```python
+def save_image(self, response):
+    image_name = response.url.split('/')[-1]
+    image_path = 'imagefolder/' + image_name
+    with open(image_path, 'wb') as f:
+        f.write(response.body)
+```
+
+```python
+# Configure item pipelines
+# See https://docs.scrapy.org/en/latest/topics/item-pipeline.html
+ITEM_PIPELINES = {
+   "bookscraper.pipelines.BookscraperPipeline": 300,
+   # 'bookscraper.pipelines.BookImagePipeline': 1,
+}
+
+# Setting download storage
+IMAGES_STORE = r"D:\VScode WorkStation\ScrapyNoob\Part3\bookscraper\imagefolder"
+```
+
+In Scrapy's `settings.py`, the `ITEM_PIPELINES` setting is a dictionary where keys represent the class names of the item pipelines to use, and the values represent the order in which they will be executed.
+
+The numbers assigned to each pipeline indicate their priority or order of execution. Lower numbers mean higher priority. When an item is yielded from a spider's `parse` method, Scrapy will pass it through each pipeline in ascending order of their priority numbers.
+
+However, we'd like to make those images more clear, thus let's rename them with their title.
+⭐Attention! We need to filter illegal characters.
+
+```python
+def save_image(self, response):
+    title = response.meta['title']
+    # filter
+    title = re.sub(r'[\\/:*?"<>|]', '', title)
+    title = title.replace(' ', '_')
+    image_name = f"{title}.jpg"
+    image_path = 'imagefolder/' + image_name
+    with open(image_path, 'wb') as f:
+        f.write(response.body)
+```
+
 ---
-# Part 6
+# Part 6: Items & Item Pipelines
+
+## 6.1 Scrapy Items
+
+Scrapy Items are a predefined data structure that holds your data, and using Scrapy Items have a number of advantages:
+
+- Structures your data and gives it a clear schema.
+- Enables you to easily clean and process your scraped data.
+- Enables you to validate, deduplicate and monitor your data feeds.
+- Enables you to easily store and export your data with [Scrapy Feed Exports](https://docs.scrapy.org/en/1.8/topics/feed-exports.html).
+- Makes using [Scrapy Item Pipelines](https://docs.scrapy.org/en/latest/topics/item-pipeline.html) & [Item Loaders](https://docs.scrapy.org/en/latest/topics/loaders.html).
+
+Scrapy supports multiple types of data formats that are automatically converted into Scrapy Items when yielded:
+
+- [Dictionaries](https://docs.scrapy.org/en/latest/topics/items.html#dict-items)
+- [Dataclass Objects](https://docs.scrapy.org/en/latest/topics/items.html#dataclass-items)
+- [Attrs Objects](https://docs.scrapy.org/en/latest/topics/items.html#attrs-items)
+
+## 6.2 Pack Things Up In Scrapy Items
+
+```python
+import scrapy
+
+class BookscraperItem(scrapy.Item):
+    # define the fields for your item here like:
+    # name = scrapy.Field()
+    pass
+
+class BookItem(scrapy.Item):
+   url = scrapy.Field()
+   title = scrapy.Field()
+   upc = scrapy.Field()
+   product_type = scrapy.Field()
+   price_excl_tax = scrapy.Field()
+   price_incl_tax = scrapy.Field()
+   tax = scrapy.Field()
+   availability = scrapy.Field()
+   num_reviews = scrapy.Field()
+   stars = scrapy.Field()
+   category = scrapy.Field()
+   description = scrapy.Field()
+   price = scrapy.Field()
+```
+
+Then in our `bookspider.py` file, import the Item schema and update our spider to store the data in the Item and yield the `book_item` once the data has been scraped.
+
+## 6.3 Cleaning Our Scraped Data With Item Pipelines
+
+> If you only have small amount of data to process, you can simply use `serializer` to serialize your data in `items.py`, which may save you some time.
+> For example, if we want to fix the illegal characters of pound sign, we can define a `serialize_price` function to convert it. ( `return f'£ {str(value)}'` )
+
+Item Pipelines are the data processors of Scrapy, which all our scraped Items will pass through and from where we can clean, process, validate, and store our data.
+
+Using Scrapy Pipelines we can:
+
+- Clean our data (ex. remove currency signs from prices)
+- Format our data (ex. convert strings to ints)
+- Enrich our data (ex. convert relative links to absolute links)
+- Valdiate our data (ex. make sure the price scraped is a viable price)
+- Store our data in databases, queues, files or object storage buckets.
+
+As we have already collected some raw data, it is time for us to clean them before storing them in local.
+
+```data
+...
+"availability": "In stock (15 available)", "num_reviews": "0", "stars": "star-rating Five"
+...
+```
+
+We can tell from the `json` that the format should be correct, like "availability" should be number, and "stars" should be number, etc.
+
+### 6.3.1 `pipelines.py`, Launch!
+
+There are 6 main functions that we need to implement in the pipeline which are as follows:
+#### Strip Whitespaces From Strings
+
+Some of the text we've scraped might have leading or trailing whitespaces or newlines that we don't want, so we will add a step to the pipeline to remove these from every field except the `description` field.
+#### Convert Category & Product Type To Lowercase
+
+Next, we will convert the `category` and `product_type` fields to lower case instead of title case.
+#### Clean Price Data
+
+Currently, the `price`, `price_excl_tax`, `price_incl_tax` and `tax` fields are strings and contain a `£` sign at the start. We want to convert these prices into floats and remove the `£` sign.
+#### Extract Availability From Text
+
+Currently, the `availability` value is a sentence like this `In stock (19 available)`. We want to extract the number and save it as a integer.
+#### Convert Reviews To Integer
+
+Currently, the `num_reviews` value is a string, however, we would like to save it as a integer.
+#### Convert Stars To Number
+
+Finally, the `stars` value is a string like this `star-rating Five`. We want to extract the text number and convert it into a integer.
+
+
+**Full Version:**
+```python
+class BookscraperPipeline:
+    def process_item(self, item, spider):
+        adapter = ItemAdapter(item)
+
+        ## Strip all whitespaces from strings
+        field_names = adapter.field_names()
+        for field_name in field_names:
+            if field_name != 'description':
+                value = adapter.get(field_name)
+                adapter[field_name] = value.strip()
+
+        ## Category & Product Type --> switch to lowercase
+        lowercase_keys = ['category', 'product_type']
+        for lowercase_key in lowercase_keys:
+            value = adapter.get(lowercase_key)
+            adapter[lowercase_key] = value.lower()
+
+        ## Price --> convert to float
+        price_keys = ['price', 'price_excl_tax', 'price_incl_tax', 'tax']
+        for price_key in price_keys:
+            value = adapter.get(price_key)
+            value = value.replace('£', '')
+            adapter[price_key] = float(value)
+
+        ## Availability --> extract number of books in stock
+        availability_string = adapter.get('availability')
+        split_string_array = availability_string.split('(')
+        if len(split_string_array) < 2:
+            adapter['availability'] = 0
+        else:
+            availability_array = split_string_array[1].split(' ')
+            adapter['availability'] = int(availability_array[0])
+
+        ## Reviews --> convert string to number
+        num_reviews_string = adapter.get('num_reviews')
+        adapter['num_reviews'] = int(num_reviews_string)
+        ## Stars --> convert text to number
+        stars_string = adapter.get('stars')
+        split_stars_array = stars_string.split(' ')
+        stars_text_value = split_stars_array[1].lower()
+        if stars_text_value == "zero":
+            adapter['stars'] = 0
+        elif stars_text_value == "one":
+            adapter['stars'] = 1
+        elif stars_text_value == "two":
+            adapter['stars'] = 2
+        elif stars_text_value == "three":
+            adapter['stars'] = 3
+        elif stars_text_value == "four":
+            adapter['stars'] = 4
+        elif stars_text_value == "five":
+            adapter['stars'] = 5
+
+        return item
+```
+
+### 6.3.2 Activating Pipeline
+
+Uncomment in the `setting.py` file.
+
+```python
+# Configure item pipelines
+# See https://docs.scrapy.org/en/latest/topics/item-pipeline.html
+ITEM_PIPELINES = {
+   "bookscraper.pipelines.BookscraperPipeline": 300,
+   # 'bookscraper.pipelines.BookImagePipeline': 1,
+}
+```
+
+Sample:
+
+```json
+{'availability': 22,
+ 'category': 'poetry',
+ 'description': "It's hard to imagine a world without A Light in the Attic. "
+                'This now-classic collection of poetry and drawings from Shel '
+                'Silverstein celebrates its 20th anniversary with this special '
+                "edition. Silverstein's humorous and creative verse can amuse "
+                'the dowdiest of readers. Lemon-faced adults and fidgety kids '
+                'sit still and read these rhythmic words and laugh and smile '
+                "and love th It's hard to imagine a world without A Light in "
+                'the Attic. This now-classic collection of poetry and drawings '
+                'from Shel Silverstein celebrates its 20th anniversary with '
+                "this special edition. Silverstein's humorous and creative "
+                'verse can amuse the dowdiest of readers. Lemon-faced adults '
+                'and fidgety kids sit still and read these rhythmic words and '
+                'laugh and smile and love that Silverstein. Need proof of his '
+                "genius? RockabyeRockabye baby, in the treetopDon't you know a "
+                'treetopIs no safe place to rock?And who put you up there,And '
+                "your cradle, too?Baby, I think someone down here'sGot it in "
+                'for you. Shel, you never sounded so good. ...more',
+ 'image_urls': 'https://books.toscrape.com/media/cache/fe/72/fe72f0532301ec28892ae79a629a293c.jpg',
+ 'num_reviews': 0,
+ 'price': 51.77,
+ 'price_excl_tax': 51.77,
+ 'price_incl_tax': 51.77,
+ 'product_type': 'books',
+ 'stars': 3,
+ 'tax': 0.0,
+ 'title': 'A Light in the Attic',
+ 'upc': 'a897fe39b1053632',
+ 'url': 'https://books.toscrape.com/catalogue/a-light-in-the-attic_1000/index.html'}
+```
+
+---
+# Part 7: Saving Data To Files & Databases
+
+## 7.1 Saving Data To CSV
+### 7.1.1 Saving Data To CSVs Via Command Line
+
+| Flag | Description                                                            |
+| ---- | ---------------------------------------------------------------------- |
+| `-o` | Appends new data to an existing file.                                  |
+| `-O` | Overwrites any existing file with the same name with the current data. |
+
+Telling Scrapy to save the data to a CSV via the command line is okay, but can be a little messy. The other option is setting it in your code, which Scrapy makes very easy.
+
+### 7.1.2 Saving Data To CSVs Via Feeds
+
+We can configure it in our `settings.py` file by passing it a dictionary with the path/name of the file and the file format:
+
+```python
+# settings.py 
+FEEDS = {
+    'data.csv': {'format': 'csv', 'overwrite': true}
+}
+```
+
+You can also configure this in each individual spider by setting a `custom_setting` in your spider.
+
+```python
+class BookSpider(scrapy.Spider):  
+    ...
+    custom_settings = {  
+        'FEEDS': { 'data.csv': { 'format': 'csv',}}  
+    } 
+    
+	def parse(self, response):
+	...
+```
+
+**In case that sometimes the file may become very big, we can create dynamic file paths/names using spider variables.**
+
+For example, here tell create a CSV for the data in the data folder, followed by the subfolder with the spiders name, and a file name that includes the spider name and date it was scraped.
+
+```python
+# settings.py 
+FEEDS = {    
+	'data/%(name)s/%(name)s_%(time)s.csv': {        
+		 'format': 'csv',
+	}
+}
+```
+
+The generated path would look something like this.
+
+```shell
+"data/bookspider/bookspider_2022-05-18T07-47-03.csv"
+```
+
+More details can be refered in [Saving Data To CSVs Guide](https://thepythonscrapyplaybook.com/scrapy-save-csv-files/)
+
+## 7.2 Saving Data To Json File
+
